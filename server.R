@@ -13,8 +13,8 @@ library(MASS)
 library(corrplot)
 
 shinyServer(function(input, output, session) {
-  observeEvent(input$runJurkatAnnotation, {
-    xJU.df <- read.csv(input$Jurkatfilename$datapath, header=TRUE)
+  observeEvent(input$runAnnotation, {
+    xJU.df <- read.csv(input$filename$datapath, header=TRUE)
     # annotation
     annot.df <- xJU.df[, c(3, 12)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
     annot.df$UniProt <- as.character(sapply(annot.df$UniProt, function(x) unlist(strsplit(x, split=';'))[1]))

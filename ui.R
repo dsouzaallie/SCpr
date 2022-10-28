@@ -4,9 +4,9 @@ library("shinythemes")
 shinyUI(fluidPage(theme=shinytheme("darkly"),
                   tabsetPanel(type="tabs",
                               #Output Plots onto actual Tabs.
-                              tabPanel("Jurkat File Format.",
-                                       fileInput('input$Jurkatfilename$datapath', 'Jurkat Filename'),
-                                       actionButton('runJurkatAnnotation', 'Format Jurkat File.')),
+                              tabPanel("File Format.",
+                                       fileInput('input$filename$datapath', 'Single Cell Filename'),
+                                       actionButton('runAnnotation', 'Format Single Cell File.')),
                               
                               tabPanel("PCAness.",
                                        actionButton('runPCA', 'PCAness.')),
