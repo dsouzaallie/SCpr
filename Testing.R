@@ -130,7 +130,56 @@ htMap <- pheatmap(cy.m,
          drop_levels = TRUE,
          main = 'Single Cell Group 1 vs Group 2'
 )
+
 pdf('heatmap.pdf')
 plot(htMap)
 dev.off()
 
+jx <- grep('128|129', colnames(cy.df))
+ux <- grep('130|131', colnames(cy.df))
+xmeancy.df <- as.data.frame(t(apply(cy.df, 1, function(x) {
+  jmn <- mean(x[jx])
+  umn <- mean(x[ux])
+  return(c(jmn, umn))
+})))
+
+meancy.df <- exp(xmeancy.df)
+meancy.df <- namerows(meancy.df, col.name='Prot')
+meltcy.df <- melt(meancy.df)
+meltcy.df$variable <- ifelse(meltcy.df$variable=='V1', 'Group 1', 'Group 2')
+
+pAvg <- ggplot(meltcy.df)
+pAvg <- pAvg + geom_bar(mapping=aes(x=Prot, y=value, fill=variable), position='dodge', stat='identity')
+pAvg + theme(axis.text.x=element_text(angle=90, hjust=1))
+
+pdf('protAvg.pdf')
+plot(pAvg)
+dev.off()
+
+
+
+#Correlation
+gr <- rep(c(rep('N', 3), rep('A', 5)), 12)
+sn <- sampleNames(nbju.mses)
+names(sn) <- gr
+
+xte <- data.frame(te, Treatment=gr)
+myz <- lda(Treatment ~ ., xte) # warning: variables are collinear
+
+# look at  correlations
+te.cor <- cor(xte[-dim(xte)[2]])
+corrplot.mixed(te.cor)
+
+#Testing SIMLR
+
+library(SIMLR)
+fx <- factanal(exprs(nbju.mss),factors=2,scores="regression")
+
+set.seed(123410)
+x12346.simlr <- SIMLR(exprs(nbju.mss), 5)
+x12348.simlr <- SIMLR(exprs(nbju.mss), 3) # probably 3 clusters
+x123410.simlr <- SIMLR(exprs(nbju.mss), 4)
+
+pdf('simlr.pdf')
+plotSIMLRclusters(x12348.simlr)
+dev.off()
