@@ -11,24 +11,27 @@ library(limma)
 library(gplots)
 library(MASS)
 library(corrplot)
+library(SIMLR)
 
 shinyServer(function(input, output, session) {
-  observeEvent(input$runAnnotation, {
+  observeEvent(input$runPCA, {
     xJU.df <- read.csv(input$filename$datapath, header=TRUE)
     # annotation
-    annot.df <- xJU.df[, c(3, 12)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
+    xJU.df <- JU.df
+    # annotation
+    annot.df <- xJU.df[, c(5, 8)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
     annot.df$UniProt <- as.character(sapply(annot.df$UniProt, function(x) unlist(strsplit(x, split=';'))[1]))
     annot.df <- annot.df[!is.na(annot.df$UniProt), ]
-    write.table(annot.df$UniProt, file='uniprot_JurkatvsU937.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
-    accannot.df <- read.table('uniprot_JurkatvsU937.txt', quote='', sep='\t')
+    write.table(annot.df$UniProt, file='uniprot.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
+    accannot.df <- read.table('uniprot.txt', quote='', sep='\t')
     
     # data
-    xJU.df <- xJU.df[, c(3, 6, 376:771)]
-    xJU.df$Contaminant <- as.logical(toupper(xJU.df$Contaminant))
+    xJU.df <- xJU.df[, c(5, 8, 31:38, 41)]
     xJU.df <- xJU.df[!xJU.df$Contaminant, ]
     xJU.df <- xJU.df[, -2]
     colnames(xJU.df) <- gsub('\\.\\.', '_', gsub('Abundances\\.\\.Grouped\\.\\.\\.', '', colnames(xJU.df)))
     colnames(xJU.df)[1] <- 'PepSeq'
+    xJU.df <- xJU.df[1:9]
     
     # lookup
     pep2uniprot <- new.env(hash=TRUE)
@@ -39,15 +42,14 @@ shinyServer(function(input, output, session) {
     apply(annot.df, 1, function(x) {
       uniprot2sym[[x[1]]] <- x[2]
     })
-  
+    
     xJU.lst <- prepAnnot(xJU.df)
     xJU.pd <- read.csv('pData.txt')
     xJU.mss <- MSnSet(xJU.lst[[1]], xJU.lst[[2]], xJU.pd)
     xJU.mss <- xJU.mss[, grep('126|127', sampleNames(xJU.mss), invert=TRUE)]
     
     ju.mss <- rmAllMiss(xJU.mss)
-  })
-  observeEvent(input$runPCA, {
+    
     aju.mss <- plotPercMissing(ju.mss, lessthan=70)
     aju.mss <- rmAllMiss(aju.mss)
     # 1. log transform
@@ -66,7 +68,7 @@ shinyServer(function(input, output, session) {
     nbju.mses <- ExpressionSet(assayData=exprs(nbju.mss), phenoData=phenoData)
     
     dsgn <- model.matrix(~ 0+factor(pData(nbju.mses)$Treatment))
-    colnames(dsgn) <- c('Jurkat', 'U937')
+    colnames(dsgn) <- c('Group1', 'Group2')
     
     fit <- lmFit(nbju.mses, dsgn)
     residuals.m <- residuals.MArrayLM(fit, exprs(nbju.mses))
@@ -80,7 +82,7 @@ shinyServer(function(input, output, session) {
     cY <- t(cY)
     
     p <- plotPCA_sc_v1(cY, pd)
-    pdf('pca.pdf')
+    png('pca.png')
     plot(p)
     dev.off()
   })
@@ -89,16 +91,17 @@ shinyServer(function(input, output, session) {
     exprs(cY.mses) <- cY
     
     dsgn <- model.matrix(~ 0+factor(pData(cY.mses)$Treatment))
-    colnames(dsgn) <- c('Jurkat', 'U937')
+    colnames(dsgn) <- c('Group1', 'Group2')
     
     cYfit <- lmFit(cY.mses, dsgn)
-    contrast.matrix <- makeContrasts(Jurkat-U937, levels=dsgn)
+    contrast.matrix <- makeContrasts(Group1-Group2, levels=dsgn)
     cYfit2 <- contrasts.fit(cYfit, contrast.matrix)
     cYfit2 <- eBayes(cYfit2)
-    res.tt <- topTable(cYfit2, number=Inf, p.value=0.05, lfc=0.59) 
+    res.tt <- topTable(cYfit2, number=Inf, p.value=0.1, lfc=0.59) 
     
     deAcc <- unique(as.character(unlist(mget(rownames(res.tt), pep2uniprot))))
     write.table(deAcc, file='normalizedMatrix.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
+    
   })
   observeEvent(input$createHeat, {
     cy.m <- cY
@@ -110,27 +113,31 @@ shinyServer(function(input, output, session) {
     
     ord <- pd
     ord <- sort(ord)
-    cy_col <- as.data.frame(ifelse(ord == 1, 'Jurkat', 'U937'))
+    cy_col <- as.data.frame(ifelse(ord == 1, 'Group2', 'Group1'))
     colnames(cy_col) <- 'Tissue'
     cy.df <- cy.df[, match(names(ord), colnames(cy.df))]
     cy.m <- as.matrix(cy.df)
     
-    pdf('heatmap.pdf')
-    pheatmap(cy.m,
-             color = inferno(10),
-             kmeans_k=NA,
-             scale = 'row',
-             breaks = NA,
-             clustering_distance_rows = 'euclidean',
-             #clustering_method= 'ward.D',
-             cluster_rows = TRUE,
-             cluster_cols = FALSE,
-             show_rownames = FALSE, 
-             show_colnames = FALSE,
-             annotation_col = cy_col,
-             drop_levels = TRUE,
-             main = 'Single Jurkat vs U937'
+    #Testing From here
+    
+    htMap <- pheatmap(cy.m,
+                      color = inferno(10),
+                      kmeans_k=NA,
+                      scale = 'row',
+                      breaks = NA,
+                      clustering_distance_rows = 'euclidean',
+                      #clustering_method= 'ward.D',
+                      cluster_rows = TRUE,
+                      cluster_cols = FALSE,
+                      show_rownames = FALSE, 
+                      show_colnames = FALSE,
+                      annotation_col = cy_col,
+                      drop_levels = TRUE,
+                      main = 'Single Cell Group 1 vs Group 2'
     )
+    
+    png('heatmap.png')
+    plot(htMap)
     dev.off()
   })
   observeEvent(input$createFrequency, {
@@ -145,14 +152,18 @@ shinyServer(function(input, output, session) {
     meancy.df <- exp(xmeancy.df)
     meancy.df <- namerows(meancy.df, col.name='Prot')
     meltcy.df <- melt(meancy.df)
-    meltcy.df$variable <- ifelse(meltcy.df$variable=='V1', 'Jurkat', 'U937')
+    meltcy.df$variable <- ifelse(meltcy.df$variable=='V1', 'Group 1', 'Group 2')
     
-    p <- ggplot(meltcy.df)
-    p <- p + geom_bar(mapping=aes(x=Prot, y=value, fill=variable), position='dodge', stat='identity')
-    p + theme(axis.text.x=element_text(angle=90, hjust=1))
+    pAvg <- ggplot(meltcy.df)
+    pAvg <- pAvg + geom_bar(mapping=aes(x=Prot, y=value, fill=variable), position='dodge', stat='identity')
+    pAvg + theme(axis.text.x=element_text(angle=90, hjust=1))
+    
+    png('protAvg.png')
+    plot(pAvg)
+    dev.off()
   })
   observeEvent(input$createCorrelation, {
-    gr <- rep(c(rep('N', 3), rep('A', 5)), 12)
+    gr <- rep(c(rep('N', 4), rep('A', 4)), 1)
     sn <- sampleNames(nbju.mses)
     names(sn) <- gr
     
@@ -162,8 +173,36 @@ shinyServer(function(input, output, session) {
     # look at  correlations
     te.cor <- cor(xte[-dim(xte)[2]])
     corrplot.mixed(te.cor)
+    
   })
   
+  observeEvent(input$createCorrelation, {
+    gr <- rep(c(rep('N', 4), rep('A', 4)), 1)
+    sn <- sampleNames(nbju.mses)
+    names(sn) <- gr
+    
+    xte <- data.frame(te, Treatment=gr)
+    myz <- lda(Treatment ~ ., xte) # warning: variables are collinear
+    
+    # look at  correlations
+    te.cor <- cor(xte[-dim(xte)[2]])
+    corrplot.mixed(te.cor)
+    
+  })
+  
+  observeEvent(input$SIMLR, {
+    
+    fx <- factanal(exprs(nbju.mss),factors=2,scores="regression")
+    
+    set.seed(123410)
+    x12346.simlr <- SIMLR(exprs(nbju.mss), 5)
+    x12348.simlr <- SIMLR(exprs(nbju.mss), 40)
+    x123410.simlr <- SIMLR(exprs(nbju.mss), 4)
+    
+    pdf('simlr.pdf')
+    plotSIMLRclusters(x12348.simlr)
+    dev.off()
+  })
   
 
 })

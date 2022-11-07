@@ -4,22 +4,13 @@ library("shinythemes")
 shinyUI(fluidPage(theme=shinytheme("darkly"),
                   tabsetPanel(type="tabs",
                               #Output Plots onto actual Tabs.
-                              tabPanel("File Format.",
+                              tabPanel("SCREEN.",
                                        fileInput('input$filename$datapath', 'Single Cell Filename'),
-                                       actionButton('runAnnotation', 'Format Single Cell File.')),
-                              
-                              tabPanel("PCAness.",
-                                       actionButton('runPCA', 'PCAness.')),
-                              
-                              tabPanel("Compute Normalization.",
-                                       actionButton('normMatrix', 'Normalization.')),
-                              tabPanel("Heatmap.",
-                                       actionButton('createHeat', 'Heatmap.')),
-                              tabPanel("Frequency.",
-                                       actionButton('createFrequency', 'Frequency.')),
-                              tabPanel("Venn.",
-                                       actionButton('createVenn', 'Venn.')),
-                              tabPanel("Correlation",
+                                       actionButton('runPCA', 'PCA.'),
+                                       actionButton('normMatrix', 'Normalization.'),
+                                       actionButton('createHeat', 'Heatmap.'),
+                                       actionButton('createFrequency', 'Frequency.'),
+                                       actionButton('createVenn', 'Venn.'),
                                        actionButton('createCorrelation', 'Correlation.')),
                          
                   )
