@@ -12,6 +12,8 @@ library(corrplot)
 library(pheatmap)
 library(RColorBrewer)
 library(viridis)
+library(SIMLR)
+
 
 
 JU.df <- read.csv('072018X_SAM00093_AS_Megakaryocytes_TMT11plexPlate1_1-12_UniprotMouse2_PSM_Imputed_missForest.csv', header=TRUE)
@@ -124,14 +126,14 @@ htMap <- pheatmap(cy.m,
          #clustering_method= 'ward.D',
          cluster_rows = TRUE,
          cluster_cols = FALSE,
-         show_rownames = FALSE, 
+         show_rownames = TRUE, 
          show_colnames = FALSE,
          annotation_col = cy_col,
          drop_levels = TRUE,
          main = 'Single Cell Group 1 vs Group 2'
 )
 
-pdf('heatmap.pdf')
+png('heatmap.png')
 plot(htMap)
 dev.off()
 
@@ -172,9 +174,8 @@ corrplot.mixed(te.cor)
 
 #Testing SIMLR
 
-library(SIMLR)
 fx <- factanal(exprs(nbju.mss),factors=2,scores="regression")
-write.table(exprs(nbju.mss), 'BuettnerFlorian.txt')
+write.table(exprs(nbju.mss), 'SIMLR_.txt')
 SIMLR_.df <- read.table('SIMLR_.txt', quote='', sep='\t', header=TRUE)
 
 set.seed(123410)
@@ -185,3 +186,4 @@ x123410.simlr <- SIMLR(exprs(nbju.mss), 4)
 pdf('simlr.pdf')
 plotSIMLRclusters(x12348.simlr)
 dev.off()
+
