@@ -85,12 +85,10 @@ prepAnnot <- function(df) {
   bm <- as.matrix(adf[-1])
   
   bm.cnames <- sapply(colnames(bm), function(x) {
-    if(grepl('126|127', x)) {
+    if (grepl('128|129', x)) {
       x <- paste(x, '0', sep=',')
-    } else if (grepl('128|129', x)) {
-      x <- paste(x, '1', sep=',')
     } else if (grepl('130|131', x)) {
-      x <- paste(x, '2', sep=',')
+      x <- paste(x, '1', sep=',')
     }
   })
   write.table(bm.cnames, file='pData.txt', col.names='Treatment', row.names=FALSE, quote=FALSE, sep='\t')
@@ -144,13 +142,13 @@ plotPCA_sc_v1 <- function(m, pdat) {
   df <- namerows(df, col.name='Samples')
   
   spl <- df$Samples
-  cl <- pd[match(spl, names(pd))]
-  spl <- ifelse(cl==1, 'Jurkat', 'U937')
+  cl <- pdat[match(spl, names(pdat))]
+  spl <- ifelse(cl==1, 'Group1', 'Group2')
   df$Samples <- spl
   
   p <- ggplot(df, aes(PC1, PC2, colour=Samples)) + geom_point(size=2)
   p <- p + theme(legend.position='right', legend.title=element_blank())
-  p <- p + labs(title='Jurkat vs U937 Cells')
+  p <- p + labs(title='Group1 vs Group2 Cells')
   return(p)
 }
 
@@ -163,7 +161,7 @@ plotPCA_sc<- function(m) {
   
   p <- ggplot(df, aes(PC1, PC2, colour=Samples)) + geom_point(size=2)
   p <- p + theme(legend.position='right', legend.title=element_blank())
-  p <- p + labs(title='Single Cell Jurkat PMA Activation')
+  p <- p + labs(title='Single Cell Group1 vs. Group2')
   return(p)
 }
 
