@@ -1,7 +1,7 @@
 #Created by Alexandria D'Souza
 
 options(shiny.maxRequestSize=300*1024^2) 
-
+source('SCREEN_Functions.R')
 library(MSnbase)
 library(reshape)
 library(pheatmap)
@@ -15,27 +15,170 @@ library(pheatmap)
 library(RColorBrewer)
 library(viridis)
 library(SIMLR)
+library(dplyr)
+library("tidyverse")
 
 shinyServer(function(input, output, session){
-  observeEvent(input$runSCREEN, {
-    source('SCREEN_Functions.R')
+  
+  observeEvent(input$runimputation, {
+    impute.df <- read.csv(input$psmfilename, header=TRUE)
+    startAbundance <- as.integer(grep(paste(input$abundancecolumn,"$",sep=''), colnames(impute.df)))-1
+    
+    system(paste("/Library/Frameworks/Python.framework/Versions/3.10/bin/python3 ImputationMethods/missForest_model.py ", input$psmfilename, " ", input$replicatenum1, " ", startAbundance, " ", input$replicatenum2,  " ", input$psmfilename, wait=FALSE))
+    
+    
+  })
+  observeEvent(input$runscOrder, {
+    JU.df <- read.csv('InputFiles/Imputed_columnSelect_.csv', header=TRUE, sep=',')
+    JUx.df <- JU.df[JU.df$Experiment == input$experimentType,]
+    x.df<-split(JUx.df, f=list(JUx.df$File.ID))
+    sc.df <- x.df %>% reduce(full_join, by=c("Annotated.Sequence","Master.Protein.Accessions"))
+    sc.v <- sort(colnames(sc.df))
+    scOrdered.df <- sc.df[, sc.v]
+    write.csv(scOrdered.df,'InputFiles/scOrdered.csv',row.names = FALSE)
+    
+    print('Single Cell Format File Written.')
+  })
+  observeEvent(input$downloadPCA, {
     
 
-    screenFile.df <- read.csv(input$ImputedFile$datapath, header=TRUE)
+
+    screenFile.df <- read.csv(input$ImputedFile, header=TRUE)
     xJU.df <- screenFile.df
-    annot.df <- xJU.df[, c(5, 8)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
+    peptidePCA <- grep("Annotated.Sequence", colnames(screenFile.df))
+    proteinPCA <- grep("Master.Protein.Accessions", colnames(screenFile.df))
+    annot.df <- xJU.df[, c(peptidePCA, proteinPCA)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
+    annot.df$UniProt <- as.character(sapply(annot.df$UniProt, function(x) unlist(strsplit(x, split=';'))[1]))
+    annot.df <- annot.df[!is.na(annot.df$UniProt), ]
+    write.table(annot.df$UniProt, file='uniprot.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
+    accannot.df <- read.table('uniprot.txt', quote='', sep='\t')
+
+    # data
+    startAbundancePCA <- 1
+    endAbundancePCA <- startAbundancePCA + as.integer(input$tmtchannels)
+    
+    #Select columns for Data Frame
+    xJU.df <- xJU.df[, c(peptidePCA, proteinPCA, startAbundancePCA:endAbundancePCA)]
+    xJU.df <- xJU.df[, -2]
+    colnames(xJU.df) <- gsub('\\.\\.', '_', gsub('Abundances\\.\\.Grouped\\.\\.\\.', '', colnames(xJU.df)))
+    colnames(xJU.df)[1] <- 'PepSeq'
+    xJU.df <- xJU.df[1:endAbundancePCA]
+
+    # lookup
+    pep2uniprot <- new.env(hash=TRUE)
+    apply(annot.df, 1, function(x) {
+      pep2uniprot[[x[1]]] <- x[2]
+    })
+    uniprot2sym <- new.env(hash=TRUE)
+    apply(annot.df, 1, function(x) {
+      uniprot2sym[[x[1]]] <- x[2]
+    })
+    prepAnnot <- function(df) {
+      aggMaxVect <- function(vect) {
+        return(ifelse(!all(is.na(vect)), max(vect[!is.na(vect)], na.rm=TRUE), NA))
+      }
+      
+      adf <- aggregate(df[-1], df[1], aggMaxVect)
+      adf <- adf[order(adf$PepSeq, decreasing=FALSE), ]
+      
+      fdf <- data.frame(ID=adf$PepSeq, Acc=adf$PepSeq)
+      rownames(fdf) <- fdf$ID
+      
+      rownames(adf) <- adf$PepSeq
+      bm <- as.matrix(adf[-1])
+      
+      bm.cnames <- sapply(colnames(bm), function(x) {
+        if (grepl(input$controls, x)) {
+          x <- paste(x, '0', sep=',')
+        } else if (grepl(input$treatments, x)) {
+          x <- paste(x, '1', sep=',')
+        }
+      })
+      write.table(bm.cnames, file='pData.txt', col.names='Treatment', row.names=FALSE, quote=FALSE, sep='\t')
+      
+      return(list(bm, fdf))
+    }
+    #Creating Mass Spec Data Frame
+    xJU.lst <- prepAnnot(xJU.df)
+    xJU.pd <- read.csv('pData.txt')
+    xJU.mss <- MSnSet(xJU.lst[[1]], xJU.lst[[2]], xJU.pd)
+    SIMLR_.mss <- logTransformWithMissing(xJU.mss)
+    write.csv(SIMLR_.mss, 'SIMLR_.csv')
+    
+    ju.mss <- rmAllMiss(xJU.mss)
+    
+    
+    aju.mss <- plotPercMissing(ju.mss, lessthan=70)
+    aju.mss <- rmAllMiss(aju.mss)
+    xju.mss <- logTransformWithMissing(aju.mss)
+    bju.mss <- impute(xju.mss, method='bpca')
+    nbju.mss <- normalise_MSnSet(bju.mss, method='quantiles')
+    pd <- phenoData(nbju.mss)$Treatment
+    names(pd) <- sampleNames(nbju.mss)
+    nbju.pd <- as.data.frame(pd)
+    colnames(nbju.pd) <- 'Treatment'
+    phenoData <- new('AnnotatedDataFrame', data=nbju.pd)
+    nbju.mses <- ExpressionSet(assayData=exprs(nbju.mss), phenoData=phenoData)
+    dsgn <- model.matrix(~ 0+factor(pData(nbju.mses)$Treatment))
+    colnames(dsgn) <- c(input$grp1label, input$grp2label)
+    
+    #creating the Matrix, Normalized and Bias Corrected
+    fit <- lmFit(nbju.mses, dsgn)
+    residuals.m <- residuals.MArrayLM(fit, exprs(nbju.mses))
+    e <- exprs(nbju.mses)
+    te <- t(e)
+    E <- t(residuals.m)
+    svdWa <- svd(E)
+    W <- svdWa$u[, 1:2]
+    alpha <- solve(t(W) %*% W) %*% t(W) %*% te
+    cY <- te - W %*% alpha
+    cY <- t(cY)
+    
+    plotPCA_sc_v1 <- function(m, pdat) {
+      pca <- prcomp(m, scale=TRUE)
+      df <- as.data.frame(pca$rotation[, 1:2])
+      df <- namerows(df, col.name='Samples')
+      
+      spl <- df$Samples
+      cl <- pdat[match(spl, names(pdat))]
+      spl <- ifelse(cl==1, input$grp1label, input$grp2label)
+      df$Samples <- spl
+      
+      p <- ggplot(df, aes(PC1, PC2, colour=Samples)) + geom_point(size=2)
+      p <- p + theme(legend.position='right', legend.title=element_blank())
+      p <- p + labs(title=input$pcatitle)
+      return(p)
+    }
+    #plot and output pca files
+    p <- plotPCA_sc_v1(cY, pd)
+    pdf('InputFiles/pca.pdf')
+    plot(p)
+    dev.off()
+  })
+  
+  observeEvent(input$downloadHeatmap, {
+    
+    
+    screenFile.df <- read.csv(input$ImputedFileHM, header=TRUE)
+    xJU.df <- screenFile.df
+    peptideHM <- grep("Annotated.Sequence", colnames(screenFile.df))
+    proteinHM <- grep("Master.Protein.Accessions", colnames(screenFile.df))
+    annot.df <- xJU.df[, c(peptideHM, proteinHM)]; colnames(annot.df) <- c('PepSeq', 'UniProt')
     annot.df$UniProt <- as.character(sapply(annot.df$UniProt, function(x) unlist(strsplit(x, split=';'))[1]))
     annot.df <- annot.df[!is.na(annot.df$UniProt), ]
     write.table(annot.df$UniProt, file='uniprot.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
     accannot.df <- read.table('uniprot.txt', quote='', sep='\t')
     
     # data
-    xJU.df <- xJU.df[, c(5, 8, 31:38, 41)]
-    xJU.df <- xJU.df[!xJU.df$Contaminant, ]
+    startAbundanceHM <- 1
+    endAbundanceHM <- startAbundanceHM + as.integer(input$tmtchannelsHM)
+    
+    xJU.df <- xJU.df[, c(peptideHM, proteinHM, startAbundanceHM:endAbundanceHM)]
+    #xJU.df <- xJU.df[!xJU.df$Contaminant, ]
     xJU.df <- xJU.df[, -2]
     colnames(xJU.df) <- gsub('\\.\\.', '_', gsub('Abundances\\.\\.Grouped\\.\\.\\.', '', colnames(xJU.df)))
     colnames(xJU.df)[1] <- 'PepSeq'
-    xJU.df <- xJU.df[1:9]
+    xJU.df <- xJU.df[1:endAbundanceHM]
     
     # lookup
     pep2uniprot <- new.env(hash=TRUE)
@@ -46,33 +189,55 @@ shinyServer(function(input, output, session){
     apply(annot.df, 1, function(x) {
       uniprot2sym[[x[1]]] <- x[2]
     })
+    prepAnnot <- function(df) {
+      aggMaxVect <- function(vect) {
+        return(ifelse(!all(is.na(vect)), max(vect[!is.na(vect)], na.rm=TRUE), NA))
+      }
+      
+      adf <- aggregate(df[-1], df[1], aggMaxVect)
+      adf <- adf[order(adf$PepSeq, decreasing=FALSE), ]
+      
+      fdf <- data.frame(ID=adf$PepSeq, Acc=adf$PepSeq)
+      rownames(fdf) <- fdf$ID
+      
+      rownames(adf) <- adf$PepSeq
+      bm <- as.matrix(adf[-1])
+      
+      bm.cnames <- sapply(colnames(bm), function(x) {
+        if (grepl(input$controlsHM, x)) {
+          x <- paste(x, '0', sep=',')
+        } else if (grepl(input$treatmentsHM, x)) {
+          x <- paste(x, '1', sep=',')
+        }
+      })
+      write.table(bm.cnames, file='pData.txt', col.names='Treatment', row.names=FALSE, quote=FALSE, sep='\t')
+      
+      return(list(bm, fdf))
+    }
     
     xJU.lst <- prepAnnot(xJU.df)
     xJU.pd <- read.csv('pData.txt')
     xJU.mss <- MSnSet(xJU.lst[[1]], xJU.lst[[2]], xJU.pd)
-    xJU.mss <- xJU.mss[, grep('126|127', sampleNames(xJU.mss), invert=TRUE)]
     
+
     ju.mss <- rmAllMiss(xJU.mss)
     
     aju.mss <- plotPercMissing(ju.mss, lessthan=70)
     aju.mss <- rmAllMiss(aju.mss)
-    # 1. log transform
-    xju.mss <- logTransformWithMissing(aju.mss) # omit missing values when taking log
-    # 2. impute
-    bju.mss <- impute(xju.mss, method='bpca') # takes a day!!!
-    #save(bju.mss, file='bju.mss.rda')
-    # 3. outliers
-    # 4. normalize
-    nbju.mss <- normalise_MSnSet(bju.mss, method='quantiles') # 5838x231; 1410(uniprot)
+    xju.mss <- logTransformWithMissing(aju.mss)
+    bju.mss <- impute(xju.mss, method='bpca')
+
+    nbju.mss <- normalise_MSnSet(bju.mss, method='quantiles')
     pd <- phenoData(nbju.mss)$Treatment
     names(pd) <- sampleNames(nbju.mss)
     nbju.pd <- as.data.frame(pd)
     colnames(nbju.pd) <- 'Treatment'
     phenoData <- new('AnnotatedDataFrame', data=nbju.pd)
     nbju.mses <- ExpressionSet(assayData=exprs(nbju.mss), phenoData=phenoData)
-    
     dsgn <- model.matrix(~ 0+factor(pData(nbju.mses)$Treatment))
-    colnames(dsgn) <- c('Group1', 'Group2')
+    colnames(dsgn) <- c(input$grp1labelHM, input$grp2labelHM)
+    
+    
     
     fit <- lmFit(nbju.mses, dsgn)
     residuals.m <- residuals.MArrayLM(fit, exprs(nbju.mses))
@@ -85,25 +250,23 @@ shinyServer(function(input, output, session){
     cY <- te - W %*% alpha
     cY <- t(cY)
     
-    p <- plotPCA_sc_v1(cY, pd)
-    pdf('pca.pdf')
-    plot(p)
-    dev.off()
-    
     cY.mses <- nbju.mses
     exprs(cY.mses) <- cY
     
+    #Create Matrix for Heatmap
     dsgn <- model.matrix(~ 0+factor(pData(cY.mses)$Treatment))
-    colnames(dsgn) <- c('Group1', 'Group2')
+    colnames(dsgn) <- c(input$grp1labelHM, input$grp2labelHM)
     
+    #Create the Contrast Matrix with Control and Treatment Design
     cYfit <- lmFit(cY.mses, dsgn)
     contrast.matrix <- makeContrasts(Group1-Group2, levels=dsgn)
     cYfit2 <- contrasts.fit(cYfit, contrast.matrix)
     cYfit2 <- eBayes(cYfit2)
-    res.tt <- topTable(cYfit2, number=Inf, p.value=0.1, lfc=0.59) 
-    
-    deAcc <- unique(as.character(unlist(mget(rownames(res.tt), pep2uniprot))))
+    res.tt <- topTable(cYfit2, number=Inf, p.value=0.1, lfc=0.59)
+
+    deAcc <- unique(as.character(unlist(mget(rownames(cYfit2), pep2uniprot))))
     write.table(deAcc, file='normalizedMatrix.txt', quote=FALSE, sep='\t', row.names=FALSE, col.names=FALSE)
+    
     
     cy.m <- cY
     rownames(cy.m) <- as.character(unlist(mget(rownames(cy.m), pep2uniprot, ifnotfound=NA)))
@@ -111,16 +274,15 @@ shinyServer(function(input, output, session){
     rownames(cy.df) <- cy.df[, 1]
     cy.df <- cy.df[-1]
     cy.df <- cy.df[rownames(cy.df) %in% deAcc, ] # 56x231
-    
+
     ord <- pd
     ord <- sort(ord)
     cy_col <- as.data.frame(ifelse(ord == 1, 'Group2', 'Group1'))
-    colnames(cy_col) <- 'Tissue'
+    colnames(cy_col) <- 'Cells'
     cy.df <- cy.df[, match(names(ord), colnames(cy.df))]
     cy.m <- as.matrix(cy.df)
     
-    #Testing From here
-    
+    #Create Heatmap
     htMap <- pheatmap(cy.m,
                       color = inferno(10),
                       kmeans_k=NA,
@@ -130,65 +292,33 @@ shinyServer(function(input, output, session){
                       #clustering_method= 'ward.D',
                       cluster_rows = TRUE,
                       cluster_cols = FALSE,
-                      show_rownames = TRUE, 
+                      show_rownames = TRUE,
                       show_colnames = FALSE,
                       annotation_col = cy_col,
                       drop_levels = TRUE,
-                      main = 'Single Cell Group 1 vs Group 2'
+                      main = input$heatmaptitle
     )
-    
-    
-    plot(htMap)
-    pdf('heatmap.pdf')
+
+    #Output
+    tiff('InputFiles/heatmap.tiff')
+    try(plot(htMap), silent=TRUE)
     dev.off()
+  })
+  
+  observeEvent(input$downloadSIMLR, {
+    #SIMLR
+
+    #Read in the SIMLR Matrix
+    SIMLR_.df <- read.table(input$SIMLRFile, quote='', sep=',', header=TRUE)
+    SIMLR_transpose.df <- setNames(data.frame(t(SIMLR_.df[,-1])), SIMLR_.df[,1])
     
-    jx <- grep('128|129', colnames(cy.df))
-    ux <- grep('130|131', colnames(cy.df))
-    xmeancy.df <- as.data.frame(t(apply(cy.df, 1, function(x) {
-      jmn <- mean(x[jx])
-      umn <- mean(x[ux])
-      return(c(jmn, umn))
-    })))
-    
-    meancy.df <- exp(xmeancy.df)
-    meancy.df <- namerows(meancy.df, col.name='Prot')
-    meltcy.df <- melt(meancy.df)
-    meltcy.df$variable <- ifelse(meltcy.df$variable=='V1', 'Group 1', 'Group 2')
-    
-    pAvg <- ggplot(meltcy.df)
-    pAvg <- pAvg + geom_bar(mapping=aes(x=Prot, y=value, fill=variable), position='dodge', stat='identity')
-    pAvg + theme(axis.text.x=element_text(angle=90, hjust=1))
-    
-    pdf('protAvg.pdf')
-    plot(pAvg)
-    dev.off()
-    
-    
-    
-    #Correlation
-    gr <- rep(c(rep('N', 4), rep('A', 4)), 1)
-    sn <- sampleNames(nbju.mses)
-    names(sn) <- gr
-    
-    xte <- data.frame(te, Treatment=gr)
-    myz <- lda(Treatment ~ ., xte) # warning: variables are collinear
-    
-    # look at  correlations
-    te.cor <- cor(xte[-dim(xte)[2]])
-    #corrplot.mixed(te.cor)
-    
-    #Testing SIMLR
-    
-    fx <- factanal(exprs(nbju.mss),factors=2,scores="regression")
-    write.table(exprs(nbju.mss), 'SIMLR_.txt', row.names = FALSE)
-    SIMLR_.df <- read.table('SIMLR_.txt', quote='', sep='\t', header=TRUE)
-    
-    set.seed(123410)
-    x12348.simlr <- SIMLR(SIMLR_.df, 40)
+    #Create Computation from User Identified Values
+    set.seed(as.integer(input$seed))
+    x12348.simlr <- SIMLR(SIMLR_.df, as.integer(input$c))
     
     pdf('simlr.pdf')
     plotSIMLRclusters(x12348.simlr)
     dev.off()
   })
-  
+
 })
